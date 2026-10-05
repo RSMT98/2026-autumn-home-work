@@ -22,50 +22,57 @@ final class KVHandler implements HttpHandler {
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
-            int status;
-            byte[] body;
-            status = 200;
-            body = EMPTY_BODY;
-            try {
-                switch (exchange.getRequestURI().getRawPath()) {
-                    case "/v0/status" ->
-                            status =
-                                    "GET".equals(exchange.getRequestMethod())
-                                            ? (dao.isAvailable() ? 200 : 503)
-                                            : methodNotAllowed(exchange, "GET");
-                    case "/v0/entity" -> {
-                        switch (exchange.getRequestMethod()) {
-                            case "GET" ->
-                                    body = dao.get(readKey(exchange.getRequestURI().getRawQuery()));
-                            case "PUT" -> {
-                                dao.upsert(
-                                        readKey(exchange.getRequestURI().getRawQuery()),
-                                        exchange.getRequestBody().readAllBytes());
-                                status = 201;
-                            }
-                            case "DELETE" -> {
-                                dao.delete(readKey(exchange.getRequestURI().getRawQuery()));
-                                status = 202;
-                            }
-                            default -> status = methodNotAllowed(exchange, "GET, PUT, DELETE");
-                        }
-                    }
-                    default -> status = 404;
+            switch (exchange.getRequestURI().getRawPath()) {
+                case "/v0/status" -> sendResponse(exchange, status(exchange), EMPTY_BODY);
+                case "/v0/entity" -> handleEntity(exchange);
+                default -> sendResponse(exchange, 404, EMPTY_BODY);
+            }
+        }
+    }
+
+    private int status(HttpExchange exchange) {
+        if (!"GET".equals(exchange.getRequestMethod())) {
+            return methodNotAllowed(exchange, "GET");
+        }
+        return dao.isAvailable() ? 200 : 503;
+    }
+
+    private void handleEntity(HttpExchange exchange) throws IOException {
+        int status = 200;
+        byte[] body = EMPTY_BODY;
+        try {
+            switch (exchange.getRequestMethod()) {
+                case "GET" -> body = dao.get(readKey(exchange.getRequestURI().getRawQuery()));
+                case "PUT" -> {
+                    dao.upsert(
+                            readKey(exchange.getRequestURI().getRawQuery()),
+                            exchange.getRequestBody().readAllBytes());
+                    status = 201;
                 }
-            } catch (NoSuchElementException e) {
-                status = 404;
-            } catch (IllegalArgumentException e) {
-                status = 400;
-            } catch (IOException e) {
-                status = 503;
+                case "DELETE" -> {
+                    dao.delete(readKey(exchange.getRequestURI().getRawQuery()));
+                    status = 202;
+                }
+                default -> status = methodNotAllowed(exchange, "GET, PUT, DELETE");
             }
-            exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
-            if (body.length == 0) {
-                exchange.sendResponseHeaders(status, -1);
-            } else {
-                exchange.sendResponseHeaders(status, body.length);
-                exchange.getResponseBody().write(body);
-            }
+        } catch (NoSuchElementException e) {
+            status = 404;
+        } catch (IllegalArgumentException e) {
+            status = 400;
+        } catch (IOException e) {
+            status = 503;
+        }
+        sendResponse(exchange, status, body);
+    }
+
+    private static void sendResponse(HttpExchange exchange, int status, byte[] body)
+            throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "application/octet-stream");
+        if (body.length == 0) {
+            exchange.sendResponseHeaders(status, -1);
+        } else {
+            exchange.sendResponseHeaders(status, body.length);
+            exchange.getResponseBody().write(body);
         }
     }
 
