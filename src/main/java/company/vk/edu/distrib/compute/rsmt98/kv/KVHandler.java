@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.NoSuchElementException;
 
 final class KVHandler implements HttpHandler {
+    private static final String GET_METHOD = "GET";
     private static final byte[] EMPTY_BODY = new byte[0];
 
     private final FileByteDao dao;
@@ -31,8 +32,8 @@ final class KVHandler implements HttpHandler {
     }
 
     private int status(HttpExchange exchange) {
-        if (!"GET".equals(exchange.getRequestMethod())) {
-            return methodNotAllowed(exchange, "GET");
+        if (!GET_METHOD.equals(exchange.getRequestMethod())) {
+            return methodNotAllowed(exchange, GET_METHOD);
         }
         return dao.isAvailable() ? 200 : 503;
     }
@@ -42,7 +43,7 @@ final class KVHandler implements HttpHandler {
         byte[] body = EMPTY_BODY;
         try {
             switch (exchange.getRequestMethod()) {
-                case "GET" -> body = dao.get(readKey(exchange.getRequestURI().getRawQuery()));
+                case GET_METHOD -> body = dao.get(readKey(exchange.getRequestURI().getRawQuery()));
                 case "PUT" -> {
                     dao.upsert(
                             readKey(exchange.getRequestURI().getRawQuery()),
