@@ -7,6 +7,7 @@ import company.vk.edu.distrib.compute.kv.KVService;
 import org.jspecify.annotations.Nullable;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,13 +17,14 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public final class HttpKVService implements KVService {
+    private static final int SINGLE_THREAD_COUNT = 1;
     private static final Path DATA_DIR;
 
     static {
         try {
             DATA_DIR = Files.createTempDirectory("rsmt98");
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new UncheckedIOException("Cannot create KV storage directory", e);
         }
     }
 
@@ -54,7 +56,7 @@ public final class HttpKVService implements KVService {
             try {
                 dao = new FileByteDao(DATA_DIR.resolve(Integer.toString(port)));
                 server = HttpServer.create(new InetSocketAddress("localhost", port), 0);
-                if (threads > 1) {
+                if (threads > SINGLE_THREAD_COUNT) {
                     executor = Executors.newFixedThreadPool(threads);
                     server.setExecutor(executor);
                 }
