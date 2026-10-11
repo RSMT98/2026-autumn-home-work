@@ -13,19 +13,8 @@ final class ClusterHttpStringDao implements Dao<String> {
 
     ClusterHttpStringDao(int... ports) {
         int[] sortedPorts = ports.clone();
-        if (sortedPorts.length == 0) {
-            throw new IllegalArgumentException("Cluster must contain at least one node");
-        }
-
         Arrays.sort(sortedPorts);
-        for (int i = 0; i < sortedPorts.length; ++i) {
-            if (sortedPorts[i] < 1 || sortedPorts[i] > MAX_PORT) {
-                throw new IllegalArgumentException("Node port must be between 1 and 65535");
-            }
-            if (i > 0 && sortedPorts[i] == sortedPorts[i - 1]) {
-                throw new IllegalArgumentException("Cluster node ports must be unique");
-            }
-        }
+        validatePorts(sortedPorts);
 
         nodes = new ArrayList<>(sortedPorts.length);
         try {
@@ -66,7 +55,7 @@ final class ClusterHttpStringDao implements Dao<String> {
             } catch (RuntimeException ee) {
                 if (e == null) {
                     e = ee;
-                } else if (e != ee) {
+                } else if (!e.equals(ee)) {
                     e.addSuppressed(ee);
                 }
             }
@@ -78,5 +67,24 @@ final class ClusterHttpStringDao implements Dao<String> {
 
     private HttpStringDao owner(String key) {
         return nodes.get(Math.floorMod(key.hashCode(), nodes.size()));
+    }
+
+    private static void validatePorts(int... sortedPorts) {
+        if (sortedPorts.length == 0) {
+            throw new IllegalArgumentException("Cluster must contain at least one node");
+        }
+
+        for (int i = 0; i < sortedPorts.length; ++i) {
+            validatePort(sortedPorts[i]);
+            if (i > 0 && sortedPorts[i] == sortedPorts[i - 1]) {
+                throw new IllegalArgumentException("Cluster node ports must be unique");
+            }
+        }
+    }
+
+    private static void validatePort(int port) {
+        if (port < 1 || port > MAX_PORT) {
+            throw new IllegalArgumentException("Node port must be between 1 and 65535");
+        }
     }
 }
