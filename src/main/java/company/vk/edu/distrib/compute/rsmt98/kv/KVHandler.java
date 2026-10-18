@@ -6,12 +6,16 @@ import com.sun.net.httpserver.HttpHandler;
 import org.jspecify.annotations.Nullable;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.NoSuchElementException;
 
 final class KVHandler implements HttpHandler {
     private static final String GET_METHOD = "GET";
+    private static final String KEY_QUERY_PREFIX = "id=";
+    private static final int MAX_VALUE_BYTES = 1024 * 1024;
     private static final byte[] EMPTY_BODY = new byte[0];
 
     private final FileByteDao dao;
@@ -26,7 +30,7 @@ final class KVHandler implements HttpHandler {
             switch (exchange.getRequestURI().getRawPath()) {
                 case "/v0/status" -> sendResponse(exchange, status(exchange), EMPTY_BODY);
                 case "/v0/entity" -> handleEntity(exchange);
-                default -> sendResponse(exchange, 404, EMPTY_BODY);
+                default -> sendResponse(exchange, HttpURLConnection.HTTP_NOT_FOUND, EMPTY_BODY);
             }
         }
     }
@@ -35,35 +39,41 @@ final class KVHandler implements HttpHandler {
         if (!GET_METHOD.equals(exchange.getRequestMethod())) {
             return methodNotAllowed(exchange, GET_METHOD);
         }
-        return dao.isAvailable() ? 200 : 503;
+        return dao.isAvailable() ? HttpURLConnection.HTTP_OK : HttpURLConnection.HTTP_UNAVAILABLE;
     }
 
     private void handleEntity(HttpExchange exchange) throws IOException {
-        int status = 200;
+        int status = HttpURLConnection.HTTP_OK;
         byte[] body = EMPTY_BODY;
         try {
             switch (exchange.getRequestMethod()) {
                 case GET_METHOD -> body = dao.get(readKey(exchange.getRequestURI().getRawQuery()));
-                case "PUT" -> {
-                    dao.upsert(
-                            readKey(exchange.getRequestURI().getRawQuery()),
-                            exchange.getRequestBody().readAllBytes());
-                    status = 201;
-                }
+                case "PUT" -> status = putEntity(exchange);
                 case "DELETE" -> {
                     dao.delete(readKey(exchange.getRequestURI().getRawQuery()));
-                    status = 202;
+                    status = HttpURLConnection.HTTP_ACCEPTED;
                 }
                 default -> status = methodNotAllowed(exchange, "GET, PUT, DELETE");
             }
         } catch (NoSuchElementException e) {
-            status = 404;
+            status = HttpURLConnection.HTTP_NOT_FOUND;
         } catch (IllegalArgumentException e) {
-            status = 400;
+            status = HttpURLConnection.HTTP_BAD_REQUEST;
         } catch (IOException e) {
-            status = 503;
+            status = HttpURLConnection.HTTP_UNAVAILABLE;
         }
         sendResponse(exchange, status, body);
+    }
+
+    private int putEntity(HttpExchange exchange) throws IOException {
+        String key = readKey(exchange.getRequestURI().getRawQuery());
+        InputStream requestBody = exchange.getRequestBody();
+        byte[] value = requestBody.readNBytes(MAX_VALUE_BYTES);
+        if (value.length == MAX_VALUE_BYTES && requestBody.read() != -1) {
+            return HttpURLConnection.HTTP_ENTITY_TOO_LARGE;
+        }
+        dao.upsert(key, value);
+        return HttpURLConnection.HTTP_CREATED;
     }
 
     private static void sendResponse(HttpExchange exchange, int status, byte[] body)
@@ -87,9 +97,11 @@ final class KVHandler implements HttpHandler {
             if (end == -1) {
                 end = query.length();
             }
-            if (query.startsWith("id=", offset)) {
+            if (query.startsWith(KEY_QUERY_PREFIX, offset)) {
                 String key =
-                        URLDecoder.decode(query.substring(offset + 3, end), StandardCharsets.UTF_8);
+                        URLDecoder.decode(
+                                query.substring(offset + KEY_QUERY_PREFIX.length(), end),
+                                StandardCharsets.UTF_8);
                 if (key.isEmpty()) {
                     throw new IllegalArgumentException("Key must be non-empty");
                 }
@@ -102,6 +114,6 @@ final class KVHandler implements HttpHandler {
 
     private static int methodNotAllowed(HttpExchange exchange, String methods) {
         exchange.getResponseHeaders().set("Allow", methods);
-        return 405;
+        return HttpURLConnection.HTTP_BAD_METHOD;
     }
 }
