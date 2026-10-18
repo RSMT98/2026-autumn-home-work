@@ -43,31 +43,33 @@ final class KVHandler implements HttpHandler {
     }
 
     private void handleEntity(HttpExchange exchange) throws IOException {
-        int status = HttpURLConnection.HTTP_OK;
-        byte[] body = EMPTY_BODY;
-        try {
-            switch (exchange.getRequestMethod()) {
-                case GET_METHOD -> body = dao.get(readKey(exchange.getRequestURI().getRawQuery()));
-                case "PUT" -> status = putEntity(exchange);
-                case "DELETE" -> {
-                    dao.delete(readKey(exchange.getRequestURI().getRawQuery()));
-                    status = HttpURLConnection.HTTP_ACCEPTED;
+        try (InputStream requestBody = exchange.getRequestBody()) {
+            int status = HttpURLConnection.HTTP_OK;
+            byte[] body = EMPTY_BODY;
+            try {
+                switch (exchange.getRequestMethod()) {
+                    case GET_METHOD ->
+                            body = dao.get(readKey(exchange.getRequestURI().getRawQuery()));
+                    case "PUT" -> status = putEntity(exchange, requestBody);
+                    case "DELETE" -> {
+                        dao.delete(readKey(exchange.getRequestURI().getRawQuery()));
+                        status = HttpURLConnection.HTTP_ACCEPTED;
+                    }
+                    default -> status = methodNotAllowed(exchange, "GET, PUT, DELETE");
                 }
-                default -> status = methodNotAllowed(exchange, "GET, PUT, DELETE");
+            } catch (NoSuchElementException e) {
+                status = HttpURLConnection.HTTP_NOT_FOUND;
+            } catch (IllegalArgumentException e) {
+                status = HttpURLConnection.HTTP_BAD_REQUEST;
+            } catch (IOException e) {
+                status = HttpURLConnection.HTTP_UNAVAILABLE;
             }
-        } catch (NoSuchElementException e) {
-            status = HttpURLConnection.HTTP_NOT_FOUND;
-        } catch (IllegalArgumentException e) {
-            status = HttpURLConnection.HTTP_BAD_REQUEST;
-        } catch (IOException e) {
-            status = HttpURLConnection.HTTP_UNAVAILABLE;
+            sendResponse(exchange, status, body);
         }
-        sendResponse(exchange, status, body);
     }
 
-    private int putEntity(HttpExchange exchange) throws IOException {
+    private int putEntity(HttpExchange exchange, InputStream requestBody) throws IOException {
         String key = readKey(exchange.getRequestURI().getRawQuery());
-        InputStream requestBody = exchange.getRequestBody();
         byte[] value = requestBody.readNBytes(MAX_VALUE_BYTES);
         if (value.length == MAX_VALUE_BYTES && requestBody.read() != -1) {
             return HttpURLConnection.HTTP_ENTITY_TOO_LARGE;
