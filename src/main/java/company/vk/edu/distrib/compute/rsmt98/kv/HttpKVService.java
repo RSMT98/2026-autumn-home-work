@@ -9,8 +9,10 @@ import org.jspecify.annotations.Nullable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.Lock;
@@ -18,6 +20,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public final class HttpKVService implements KVService {
     private static final int SINGLE_THREAD_COUNT = 1;
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
     private static final Path DATA_DIR;
 
     static {
@@ -36,6 +39,7 @@ public final class HttpKVService implements KVService {
     @Nullable private HttpServer server;
     @Nullable private ExecutorService executor;
     @Nullable private FileByteDao dao;
+    @Nullable private HttpClient client;
 
     public HttpKVService(int port, int threads) {
         if (threads <= 0) {
@@ -55,15 +59,21 @@ public final class HttpKVService implements KVService {
             startCalled = true;
             try {
                 dao = new FileByteDao(DATA_DIR.resolve(Integer.toString(port)));
+                client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
                 server = HttpServer.create(new InetSocketAddress("localhost", port), 0);
                 if (threads > SINGLE_THREAD_COUNT) {
                     executor = Executors.newFixedThreadPool(threads);
                     server.setExecutor(executor);
                 }
-                server.createContext("/", new KVHandler(dao));
+                server.createContext(
+                        "/", new KVHandler(port, dao, new ReplicaCoordinator(port, dao, client)));
                 server.start();
             } catch (IOException | RuntimeException e) {
-                stop();
+                try {
+                    stop();
+                } catch (RuntimeException | Error ee) {
+                    e.addSuppressed(ee);
+                }
                 throw new IllegalStateException("Cannot start KV service on port " + port, e);
             }
         } finally {
@@ -81,7 +91,9 @@ public final class HttpKVService implements KVService {
             stopCalled = true;
             FileByteDao storage = dao;
             ExecutorService workers = executor;
+            HttpClient httpClient = client;
             try (storage;
+                    httpClient;
                     workers) {
                 HttpServer httpServer = server;
                 if (httpServer != null) {
