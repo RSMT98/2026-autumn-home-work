@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 final class ReplicaCoordinator {
     static final String REPLICA_HEADER = "X-Replica-Request";
     static final byte[] EMPTY_BODY = new byte[0];
+    private static final String GET_METHOD = "GET";
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(1);
     private static final Response UNAVAILABLE =
             new Response(HttpURLConnection.HTTP_UNAVAILABLE, EMPTY_BODY);
@@ -57,7 +58,7 @@ final class ReplicaCoordinator {
     Response executeLocal(String method, String key, byte[] body) {
         try {
             return switch (method) {
-                case "GET" -> new Response(HttpURLConnection.HTTP_OK, dao.get(key));
+                case GET_METHOD -> new Response(HttpURLConnection.HTTP_OK, dao.get(key));
                 case "PUT" -> {
                     dao.upsert(key, body);
                     yield new Response(HttpURLConnection.HTTP_CREATED, EMPTY_BODY);
@@ -120,15 +121,18 @@ final class ReplicaCoordinator {
         int expectedStatus = successStatus(method);
         Response result =
                 new Response(
-                        "GET".equals(method) ? HttpURLConnection.HTTP_NOT_FOUND : expectedStatus,
+                        GET_METHOD.equals(method)
+                                ? HttpURLConnection.HTTP_NOT_FOUND
+                                : expectedStatus,
                         EMPTY_BODY);
         try {
-            while (confirmations < ack && confirmations + remaining >= ack) {
+            while (confirmations < ack) {
+                if (confirmations + remaining < ack) {
+                    return UNAVAILABLE;
+                }
                 Response response = responses.take();
                 --remaining;
-                if (response.status() == expectedStatus
-                        || "GET".equals(method)
-                                && response.status() == HttpURLConnection.HTTP_NOT_FOUND) {
+                if (isConfirmation(method, expectedStatus, response)) {
                     ++confirmations;
                     if (response.status() == HttpURLConnection.HTTP_OK) {
                         result = response;
@@ -139,12 +143,18 @@ final class ReplicaCoordinator {
             Thread.currentThread().interrupt();
             return UNAVAILABLE;
         }
-        return confirmations >= ack ? result : UNAVAILABLE;
+        return result;
+    }
+
+    private static boolean isConfirmation(String method, int expectedStatus, Response response) {
+        return response.status() == expectedStatus
+                || GET_METHOD.equals(method)
+                        && response.status() == HttpURLConnection.HTTP_NOT_FOUND;
     }
 
     private static int successStatus(String method) {
         return switch (method) {
-            case "GET" -> HttpURLConnection.HTTP_OK;
+            case GET_METHOD -> HttpURLConnection.HTTP_OK;
             case "PUT" -> HttpURLConnection.HTTP_CREATED;
             case "DELETE" -> HttpURLConnection.HTTP_ACCEPTED;
             default -> throw new IllegalArgumentException("Unsupported replica method");
